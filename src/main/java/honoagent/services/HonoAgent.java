@@ -2,6 +2,7 @@ package honoagent.services;
 
 import com.cumulocity.microservice.subscription.model.MicroserviceSubscriptionAddedEvent;
 import com.cumulocity.microservice.subscription.service.MicroserviceSubscriptionsService;
+import com.cumulocity.rest.representation.inventory.ManagedObjectReferenceRepresentation;
 import com.cumulocity.rest.representation.inventory.ManagedObjectRepresentation;
 import com.cumulocity.rest.representation.tenant.OptionRepresentation;
 import honoagent.config.HonoConfiguration;
@@ -94,9 +95,13 @@ public class HonoAgent {
             //props.setTrustStorePath("target/config/hono-demo-certs-jar/trusted-certs.pem");
             props.setHostnameVerificationRequired(false);
             clientFactory = ApplicationClientFactory.create(HonoConnection.newConnection(vertx, props));
+            ManagedObjectRepresentation agentMor = cumulocityClient.findAgentMor();
+            cumulocityClient.registerForOperations(agentMor.getId());
             connectWithRetry();
+            cumulocityClient.processFirstPendingOperation(agentMor);
         } catch (Exception e) {
-            logger.error("Error on Initializatzion {}", e.getStackTrace());
+            logger.error("Error on Initializatzion {}", e.getMessage() );
+            e.printStackTrace();
         }
     }
 
@@ -191,6 +196,8 @@ public class HonoAgent {
         connectWithRetry();
     }
 
+
+
     /**
      * /**
      * Handler method for a Message from Hono that was received as telemetry data.
@@ -206,6 +213,7 @@ public class HonoAgent {
             JsonObject contentJson = MessageHelper.getJsonPayload(msg);
             logger.info("Telemetry received for Device {} with Payload {}", deviceId, content);
             ManagedObjectRepresentation mor = cumulocityClient.upsertHonoDevice(deviceId, deviceId, content, DateTime.now());
+            cumulocityClient.checkAgentAssignment(mor);
             cumulocityClient.createEvent(mor, "hono_Telemetry", "Hono Telemetry Message", content, contentJson, DateTime.now());
         });
     }
@@ -225,6 +233,7 @@ public class HonoAgent {
 
             logger.info("Event received for Device {} with Payload {}", deviceId, content);
             ManagedObjectRepresentation mor = cumulocityClient.upsertHonoDevice(deviceId, deviceId, content, DateTime.now());
+            cumulocityClient.checkAgentAssignment(mor);
             cumulocityClient.createEvent(mor, "hono_Event", "Hono Event Message", content, jsonContent, DateTime.now());
         });
     }

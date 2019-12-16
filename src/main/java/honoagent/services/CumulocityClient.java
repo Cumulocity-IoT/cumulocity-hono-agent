@@ -7,16 +7,25 @@ import c8y.TemperatureMeasurement;
 import com.cumulocity.microservice.subscription.service.MicroserviceSubscriptionsService;
 import com.cumulocity.model.DateTimeConverter;
 import com.cumulocity.model.ID;
+import com.cumulocity.model.idtype.GId;
+import com.cumulocity.model.operation.OperationStatus;
 import com.cumulocity.rest.representation.event.EventRepresentation;
 import com.cumulocity.rest.representation.identity.ExternalIDRepresentation;
+import com.cumulocity.rest.representation.inventory.ManagedObjectReferenceRepresentation;
 import com.cumulocity.rest.representation.inventory.ManagedObjectRepresentation;
 import com.cumulocity.rest.representation.measurement.MeasurementRepresentation;
+import com.cumulocity.rest.representation.operation.OperationRepresentation;
 import com.cumulocity.rest.representation.tenant.OptionRepresentation;
 import com.cumulocity.sdk.client.SDKException;
+import com.cumulocity.sdk.client.devicecontrol.DeviceControlApi;
+import com.cumulocity.sdk.client.devicecontrol.OperationFilter;
 import com.cumulocity.sdk.client.event.EventApi;
 import com.cumulocity.sdk.client.identity.IdentityApi;
 import com.cumulocity.sdk.client.inventory.InventoryApi;
 import com.cumulocity.sdk.client.measurement.MeasurementApi;
+import com.cumulocity.sdk.client.notification.Subscriber;
+import com.cumulocity.sdk.client.notification.Subscription;
+import com.cumulocity.sdk.client.notification.SubscriptionListener;
 import com.cumulocity.sdk.client.option.TenantOptionApi;
 import com.cumulocity.sdk.client.option.TenantOptionCollection;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,6 +34,7 @@ import org.joda.time.DateTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.swing.text.html.Option;
@@ -52,12 +62,23 @@ public class CumulocityClient {
     MeasurementApi measurementApi;
 
     @Autowired
+    DeviceControlApi deviceControlApi;
+
+    @Autowired
     MicroserviceSubscriptionsService subscriptionsService;
 
     private ManagedObjectRepresentation loggingDevice;
 
     private final String LOGGING_ID = "HONO_LOGGING";
     private final String SERIAL_TYPE = "c8y_Serial";
+
+    @Value("${C8Y.agentName}")
+    public String agentName;
+
+    @Value("${C8Y.agentId}")
+    public String agentId;
+
+    private ManagedObjectRepresentation agentMor;
 
     final Logger logger = LoggerFactory.getLogger(CumulocityClient.class);
 
@@ -154,6 +175,16 @@ public class CumulocityClient {
         }
     }
 
+    public List<ManagedObjectReferenceRepresentation> getParentDevicesByDeviceId(ManagedObjectRepresentation mor) {
+        try {
+            List<ManagedObjectReferenceRepresentation> referenceRepresentations = inventoryApi.get(mor.getId()).getDeviceParents().getReferences();
+            return referenceRepresentations;
+        } catch (SDKException e) {
+            logger.error("Error receiving References for Device {}", mor.getId());
+            return null;
+        }
+    }
+
     public List<OptionRepresentation> getTenantOptions(String category) {
         List<OptionRepresentation> optionList = new ArrayList<>();
         try {
@@ -193,5 +224,103 @@ public class CumulocityClient {
             return event;
         }
     }
+
+    public ManagedObjectRepresentation findAgentMor() {
+        ExternalIDRepresentation extId = null;
+        if (extId == null)
+            extId = findExternalId(agentId, "c8y_Serial");
+
+        if (extId == null) {
+            logger.info("Creating Agent Object...");
+            extId = createAgent(agentName, agentId);
+            logger.info("Agent Object has been created with id {}",  extId.getManagedObject().getId().getLong());
+        }
+        agentMor = extId.getManagedObject();
+        return extId.getManagedObject();
+    }
+
+    private ExternalIDRepresentation createAgent(String name, String id) {
+        logger.info("Creating new Agent with name {} and id {}", name, id);
+        ManagedObjectRepresentation mor = new ManagedObjectRepresentation();
+        mor.setType(id);
+        mor.setName(name);
+        mor.set(new com.cumulocity.model.Agent());
+        mor = inventoryApi.create(mor);
+        ExternalIDRepresentation externalIDRepresentation = new ExternalIDRepresentation();
+        externalIDRepresentation.setType("c8y_Serial");
+        externalIDRepresentation.setExternalId(id);
+        externalIDRepresentation.setManagedObject(mor);
+        externalIDRepresentation = identityApi.create(externalIDRepresentation);
+        return externalIDRepresentation;
+    }
+
+    public void processFirstPendingOperation(ManagedObjectRepresentation agentMor) {
+        OperationFilter filter = new OperationFilter();
+        filter = filter.byAgent(agentMor.getId().toString());
+        filter = filter.byStatus(OperationStatus.PENDING);
+        Iterator<OperationRepresentation> opIt = deviceControlApi.getOperationsByFilter(filter).get().allPages().iterator();
+        while (opIt.hasNext()) {
+           OperationRepresentation op =  opIt.next();
+           op.setStatus(OperationStatus.EXECUTING.toString());
+           deviceControlApi.update(op);
+           //TODO Call Command & Control
+        }
+    }
+
+    public void checkAgentAssignment(ManagedObjectRepresentation mor) {
+        boolean agentAssigned = false;
+        try {
+            List<ManagedObjectReferenceRepresentation> referencesList = getParentDevicesByDeviceId(mor);
+            for (ManagedObjectReferenceRepresentation reference : referencesList) {
+                ManagedObjectRepresentation parentMor = reference.getManagedObject();
+                if (agentName.equals(parentMor.getName())) {
+                    agentAssigned = true;
+                    continue;
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error on finding MORs", e);
+        }
+
+        // Assign Agent
+        if (!agentAssigned) {
+            ManagedObjectRepresentation agentMor = findAgentMor();
+            assignDeviceToAgent(mor, agentMor);
+        }
+    }
+
+    public void assignDeviceToAgent(ManagedObjectRepresentation deviceMor, ManagedObjectRepresentation agentMor) {
+        ManagedObjectReferenceRepresentation child2Ref = new ManagedObjectReferenceRepresentation();
+        child2Ref.setManagedObject(deviceMor);
+        inventoryApi.getManagedObjectApi(agentMor.getId()).addChildDevice(child2Ref);
+    }
+
+    public void registerForOperations(GId agentId) {
+        Subscriber<GId, OperationRepresentation> subscriber = deviceControlApi.getNotificationsSubscriber();
+        OperationListener<GId, OperationRepresentation> operationListener = new OperationListener<>();
+        subscriber.subscribe(agentId, operationListener);
+    }
+
+    public class OperationListener<GId, OperationRepresentation>
+            implements SubscriptionListener<GId, OperationRepresentation> {
+
+        @Override
+        public void onNotification(Subscription<GId> sub, OperationRepresentation operation) {
+            subscriptionsService.runForEachTenant(() -> {
+                com.cumulocity.rest.representation.operation.OperationRepresentation op = (com.cumulocity.rest.representation.operation.OperationRepresentation) operation;
+                logger.info("Operation received {}", op.toString());
+                op.setStatus(OperationStatus.EXECUTING.toString());
+                deviceControlApi.update(op);
+                //TODO Create Hono Command & Control
+            });
+
+        }
+
+        @Override
+        public void onError(Subscription<GId> sub, Throwable throwable) {
+                logger.info("Error on Operation Listener: {}", throwable.getLocalizedMessage() );
+
+            }
+        }
 
 }
