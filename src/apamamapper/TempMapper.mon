@@ -1,0 +1,37 @@
+/** Basic event definitions for working with Cumulocity IoT */
+using com.apama.cumulocity.ManagedObject;
+
+using com.apama.cumulocity.Measurement;
+using com.apama.cumulocity.MeasurementValue;
+
+using com.apama.cumulocity.Event;
+
+monitor HonoMapper {
+	/** Initialize the application */
+	action onload() {
+	 monitor.subscribe(Event.CHANNEL);
+        on all Event(type = "hono_Telemetry") as e {
+			//log "Hono Telemetry Event received!" at INFO;
+        	if e.params.hasKey("hono_Content") {
+				try {
+					dictionary<any, any> content := <dictionary<any, any> > e.params["hono_Content"];
+					if content.hasKey("temp") {
+						float tempValue := <float> content["temp"];
+						log "Temp value existing:" at INFO;
+						Measurement m := new Measurement;
+						m.type := "c8y_TemperatureMeasurement";
+						m.time := currentTime;
+						m.source := e.source;
+						MeasurementValue mv := new MeasurementValue;
+						mv.value := tempValue;
+						mv.unit := "°C";
+						m.measurements[m.type] := {"T":mv};
+						send m to Measurement.CREATE_CHANNEL;
+					}
+				} catch(com.apama.exceptions.Exception e) {
+					log "Error during Hono Processing:" +e.toString() at ERROR;
+				}
+			}
+        }
+	}
+}

@@ -1,1 +1,0 @@
-# cumulocity-hono-agent
