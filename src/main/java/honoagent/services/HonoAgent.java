@@ -8,13 +8,12 @@ import com.cumulocity.rest.representation.tenant.OptionRepresentation;
 import honoagent.config.HonoConfiguration;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import org.apache.qpid.proton.message.Message;
-import org.eclipse.hono.client.ApplicationClientFactory;
-import org.eclipse.hono.client.DisconnectListener;
-import org.eclipse.hono.client.HonoConnection;
-import org.eclipse.hono.client.MessageConsumer;
+import org.eclipse.hono.client.*;
 import org.eclipse.hono.config.ClientConfigProperties;
+import org.eclipse.hono.util.BufferResult;
 import org.eclipse.hono.util.MessageHelper;
 import org.joda.time.DateTime;
 import org.slf4j.Logger;
@@ -25,8 +24,10 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class HonoAgent {
@@ -49,6 +50,7 @@ public class HonoAgent {
     private String honoUser = null;
     private String honoPW = null;
     private String honoTenantId = null;
+    public CommandClient commandClient = null;
 
     @EventListener
     private void onAdded(MicroserviceSubscriptionAddedEvent event) {
@@ -77,7 +79,7 @@ public class HonoAgent {
                     logger.error("Hono 'password' is missing. The Hono Password must be maintained in the configuration file or in tenant options");
                     hasErrors = true;
                 }
-                if(hasErrors) {
+                if (hasErrors) {
                     logger.info("Will retry to retrieve required Configuration in 60 sec.!");
                     try {
                         Thread.sleep(60000);
@@ -100,7 +102,7 @@ public class HonoAgent {
             connectWithRetry();
             cumulocityClient.processFirstPendingOperation(agentMor);
         } catch (Exception e) {
-            logger.error("Error on Initializatzion {}", e.getMessage() );
+            logger.error("Error on Initializatzion {}", e.getMessage());
             e.printStackTrace();
         }
     }
@@ -111,32 +113,32 @@ public class HonoAgent {
             logger.info("Getting Tenant Options from Tenant {}", subscriptionsService.getTenant());
             List<OptionRepresentation> optionList = cumulocityClient.getTenantOptions("hono");
             for (OptionRepresentation op : optionList) {
-                if("tenantid".equals(op.getKey())) {
+                if ("tenantid".equals(op.getKey())) {
                     honoTenantId = op.getValue();
                 }
-                if("username".equals(op.getKey())) {
+                if ("username".equals(op.getKey())) {
                     honoUser = op.getValue();
                 }
-                if("credentials.password".equals(op.getKey())) {
+                if ("credentials.password".equals(op.getKey())) {
                     honoPW = op.getValue();
                 }
-                if("host".equals(op.getKey())) {
+                if ("host".equals(op.getKey())) {
                     honoHost = op.getValue();
                 }
-                if("port".equals(op.getKey())) {
-                    if(op.getValue() != null)
-                    honoPort = Integer.valueOf(op.getValue());
+                if ("port".equals(op.getKey())) {
+                    if (op.getValue() != null)
+                        honoPort = Integer.valueOf(op.getValue());
                 }
             }
-            if(honoPort == null)
+            if (honoPort == null)
                 honoPort = honoConfiguration.getPort();
-            if(honoHost == null)
+            if (honoHost == null)
                 honoHost = honoConfiguration.getHost();
-            if(honoPW == null)
+            if (honoPW == null)
                 honoPW = honoConfiguration.getPassword();
-            if(honoTenantId == null)
+            if (honoTenantId == null)
                 honoTenantId = honoConfiguration.getTenantid();
-            if(honoUser == null)
+            if (honoUser == null)
                 honoUser = honoConfiguration.getUsername();
         } catch (Exception e) {
             logger.error("Error retrieving Tenant Options {}", e.getStackTrace());
@@ -156,6 +158,10 @@ public class HonoAgent {
                 logger.info("Consumer ready [tenant: {}, type: Telemetry]", honoTenantId);
                 return createEventConsumer().compose(createdEventConsumer -> {
                     logger.info("Consumer ready [tenant: {}, type: Event]", honoTenantId);
+                    final Future<CommandClient> commandClientFuture = clientFactory.getOrCreateCommandClient(honoTenantId);
+                    commandClientFuture.setHandler(commandClientResult -> {
+                        commandClient = commandClientResult.result();
+                    });
                     return Future.succeededFuture();
                 });
             });
@@ -197,7 +203,6 @@ public class HonoAgent {
     }
 
 
-
     /**
      * /**
      * Handler method for a Message from Hono that was received as telemetry data.
@@ -237,4 +242,24 @@ public class HonoAgent {
             cumulocityClient.createEvent(mor, "hono_Event", "Hono Event Message", content, jsonContent, DateTime.now());
         });
     }
+
+    public Future<Void> sendOneWayCommand( String deviceId, String contentType, String command, Buffer data, Map<String, Object> headers) {
+        logger.info("Send command (one-way mode) to device '{}'", deviceId);
+        commandClient.setRequestTimeout(TimeUnit.SECONDS.toMillis(2)); // increase to avoid errors with 200 ms default timeout
+        if (contentType == null && headers == null) {
+            return commandClient.sendOneWayCommand(deviceId, command, data);
+        } else
+            return commandClient.sendOneWayCommand(deviceId, contentType, command, data, headers);
+    }
+
+    public Future<BufferResult> sendCommand(String deviceId, String contentType, String command, Buffer data, Map<String, Object> headers) {
+        logger.info("Send command to device '{}'", deviceId);
+        commandClient.setRequestTimeout(TimeUnit.SECONDS.toMillis(2)); // increase to avoid errors with 200 ms default timeout
+        if (contentType == null && headers == null) {
+            return commandClient.sendCommand(deviceId, command, data);
+        } else
+            return commandClient.sendCommand(deviceId, contentType, command, data, headers);
+    }
+
+
 }

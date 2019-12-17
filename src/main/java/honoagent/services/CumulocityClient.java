@@ -27,9 +27,11 @@ import com.cumulocity.sdk.client.notification.Subscriber;
 import com.cumulocity.sdk.client.notification.Subscription;
 import com.cumulocity.sdk.client.notification.SubscriptionListener;
 import com.cumulocity.sdk.client.option.TenantOptionApi;
-import com.cumulocity.sdk.client.option.TenantOptionCollection;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.vertx.core.Future;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
+import org.eclipse.hono.util.BufferResult;
 import org.joda.time.DateTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,12 +39,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import javax.swing.text.html.Option;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class CumulocityClient {
@@ -63,6 +64,9 @@ public class CumulocityClient {
 
     @Autowired
     DeviceControlApi deviceControlApi;
+
+    @Autowired
+    HonoAgent honoAgent;
 
     @Autowired
     MicroserviceSubscriptionsService subscriptionsService;
@@ -97,36 +101,36 @@ public class CumulocityClient {
 
     public ManagedObjectRepresentation upsertHonoDevice(String name, String id, String data, DateTime updateTime) {
 
-            try {
-                logger.info("Upsert device with name {} and id {} with Data {}", name, id, data);
-                ExternalIDRepresentation extId = findExternalId(id, SERIAL_TYPE);
-                ManagedObjectRepresentation mor;
-                boolean deviceExists = true;
-                if (extId == null) {
-                    mor = new ManagedObjectRepresentation();
-                    mor.setType("c8y_HonoDevice");
-                    mor.setName(name);
-                    deviceExists = false;
-                } else {
-                    mor = extId.getManagedObject();
-                }
-                mor.set(new IsDevice());
-
-                mor.set(DateTimeConverter.date2String(updateTime), "lastHonoUpdate");
-                if (!deviceExists) {
-                    mor = inventoryApi.create(mor);
-                    extId = new ExternalIDRepresentation();
-                    extId.setExternalId(id);
-                    extId.setType(SERIAL_TYPE);
-                    extId.setManagedObject(mor);
-                    identityApi.create(extId);
-                } else
-                    mor = inventoryApi.update(mor);
-                return mor;
-            } catch (SDKException e) {
-                logger.info("Error on creating DT Device", e);
-                return null;
+        try {
+            logger.info("Upsert device with name {} and id {} with Data {}", name, id, data);
+            ExternalIDRepresentation extId = findExternalId(id, SERIAL_TYPE);
+            ManagedObjectRepresentation mor;
+            boolean deviceExists = true;
+            if (extId == null) {
+                mor = new ManagedObjectRepresentation();
+                mor.setType("c8y_HonoDevice");
+                mor.setName(name);
+                deviceExists = false;
+            } else {
+                mor = extId.getManagedObject();
             }
+            mor.set(new IsDevice());
+
+            mor.set(DateTimeConverter.date2String(updateTime), "lastHonoUpdate");
+            if (!deviceExists) {
+                mor = inventoryApi.create(mor);
+                extId = new ExternalIDRepresentation();
+                extId.setExternalId(id);
+                extId.setType(SERIAL_TYPE);
+                extId.setManagedObject(mor);
+                identityApi.create(extId);
+            } else
+                mor = inventoryApi.update(mor);
+            return mor;
+        } catch (SDKException e) {
+            logger.info("Error on creating DT Device", e);
+            return null;
+        }
 
     }
 
@@ -188,11 +192,11 @@ public class CumulocityClient {
     public List<OptionRepresentation> getTenantOptions(String category) {
         List<OptionRepresentation> optionList = new ArrayList<>();
         try {
-            if(category != null)
+            if (category != null)
                 optionList = tenantOptionApi.getAllOptionsForCategory(category);
             else {
                 Iterator<OptionRepresentation> optionIt = tenantOptionApi.getOptions().get().allPages().iterator();
-                while(optionIt.hasNext()) {
+                while (optionIt.hasNext()) {
                     OptionRepresentation option = optionIt.next();
                     optionList.add(option);
                 }
@@ -211,7 +215,7 @@ public class CumulocityClient {
             eventRepresentation.setSource(mor);
             eventRepresentation.setDateTime(dateTime);
             eventRepresentation.setText(eventText);
-            if(jsonContent != null) {
+            if (jsonContent != null) {
                 eventRepresentation.set(jsonContent.getMap(), "hono_Content");
             } else {
                 eventRepresentation.set(content, "hono_Content");
@@ -233,7 +237,7 @@ public class CumulocityClient {
         if (extId == null) {
             logger.info("Creating Agent Object...");
             extId = createAgent(agentName, agentId);
-            logger.info("Agent Object has been created with id {}",  extId.getManagedObject().getId().getLong());
+            logger.info("Agent Object has been created with id {}", extId.getManagedObject().getId().getLong());
         }
         agentMor = extId.getManagedObject();
         return extId.getManagedObject();
@@ -256,14 +260,14 @@ public class CumulocityClient {
 
     public void processFirstPendingOperation(ManagedObjectRepresentation agentMor) {
         OperationFilter filter = new OperationFilter();
-        filter = filter.byAgent(agentMor.getId().toString());
+        filter = filter.byAgent(agentMor.getId().getValue());
         filter = filter.byStatus(OperationStatus.PENDING);
         Iterator<OperationRepresentation> opIt = deviceControlApi.getOperationsByFilter(filter).get().allPages().iterator();
         while (opIt.hasNext()) {
-           OperationRepresentation op =  opIt.next();
-           op.setStatus(OperationStatus.EXECUTING.toString());
-           deviceControlApi.update(op);
-           //TODO Call Command & Control
+            OperationRepresentation op = opIt.next();
+            op.setStatus(OperationStatus.EXECUTING.toString());
+            deviceControlApi.update(op);
+            processOperations(op);
         }
     }
 
@@ -301,6 +305,70 @@ public class CumulocityClient {
         subscriber.subscribe(agentId, operationListener);
     }
 
+    public void processOperations(OperationRepresentation op) {
+        logger.info("Operation received {}", op.toString());
+        op.setStatus(OperationStatus.EXECUTING.toString());
+        deviceControlApi.update(op);
+        boolean oneWay = true;
+        String honoCommand = null;
+        String honoContentType = null;
+        Buffer honoData = null;
+        Map<String, Object> honoHeaders = null;
+        if (!op.hasProperty("hono_Command")) {
+            op.setFailureReason("hono_Command was missing in the Operation!");
+            op.setStatus(OperationStatus.FAILED.toString());
+            deviceControlApi.update(op);
+        } else {
+            honoCommand = op.get("hono_Command").toString();
+            if(op.hasProperty("hono_OneWay"))
+                oneWay = (boolean) op.get("hono_OneWay");
+            if (op.hasProperty("hono_Data")) {
+                honoData = Buffer.buffer(op.get("hono_Data").toString());
+            }
+            if (op.hasProperty("hono_Headers")) {
+                ObjectMapper m = new ObjectMapper();
+                honoHeaders = m.convertValue(op.get("hono_Headers"), Map.class);
+            }
+            if (op.hasProperty("hono_ContentType"))
+                honoContentType = op.get("hono_ContentType").toString();
+
+
+            if(oneWay) {
+                Future<Void> commandResult = honoAgent.sendOneWayCommand(op.getDeviceName(), honoContentType, honoCommand, honoData, honoHeaders);
+                commandResult.setHandler(result -> {
+                    subscriptionsService.runForEachTenant(() -> {
+                        if (result.succeeded()) {
+                            logger.info("Command successfully send");
+                            op.setStatus(OperationStatus.SUCCESSFUL.toString());
+                            deviceControlApi.update(op);
+                        } else {
+                            logger.error("Command not successfully send: {}", result.cause().getMessage());
+                            op.setStatus(OperationStatus.FAILED.toString());
+                            op.setFailureReason(result.cause().getMessage());
+                            deviceControlApi.update(op);
+                        }
+                    });
+                });
+            } else {
+                Future<BufferResult> commandResult = honoAgent.sendCommand(op.getDeviceName(), honoContentType, honoCommand, honoData, honoHeaders);
+                commandResult.setHandler(result -> {
+                    subscriptionsService.runForEachTenant(() -> {
+                        if (result.succeeded()) {
+                            logger.info("Command was successful {}", result.result().toString());
+                            op.setStatus(OperationStatus.SUCCESSFUL.toString());
+                            deviceControlApi.update(op);
+                        } else {
+                            logger.error("Command was not successful: {}", result.cause().getMessage());
+                            op.setStatus(OperationStatus.FAILED.toString());
+                            op.setFailureReason(result.cause().getMessage());
+                            deviceControlApi.update(op);
+                        }
+                    });
+                });
+            }
+        }
+    }
+
     public class OperationListener<GId, OperationRepresentation>
             implements SubscriptionListener<GId, OperationRepresentation> {
 
@@ -308,19 +376,15 @@ public class CumulocityClient {
         public void onNotification(Subscription<GId> sub, OperationRepresentation operation) {
             subscriptionsService.runForEachTenant(() -> {
                 com.cumulocity.rest.representation.operation.OperationRepresentation op = (com.cumulocity.rest.representation.operation.OperationRepresentation) operation;
-                logger.info("Operation received {}", op.toString());
-                op.setStatus(OperationStatus.EXECUTING.toString());
-                deviceControlApi.update(op);
-                //TODO Create Hono Command & Control
+                processOperations(op);
             });
-
         }
 
         @Override
         public void onError(Subscription<GId> sub, Throwable throwable) {
-                logger.info("Error on Operation Listener: {}", throwable.getLocalizedMessage() );
+            logger.info("Error on Operation Listener: {}", throwable.getLocalizedMessage());
 
-            }
         }
+    }
 
 }
