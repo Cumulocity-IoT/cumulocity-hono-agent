@@ -10,9 +10,9 @@ This Microservices uses the [Hono Client](https://github.com/eclipse/hono/tree/m
 
 The [Cumulocity Microservice SDK](https://cumulocity.com/guides/microservice-sdk/introduction/) version 1005.6.1 in combination with Java 8 + Spring Boot 1.5 are used.
 
-### Hono C8Y Data Mapping
+## Hono C8Y Data Mapping
 
-#### Telemetry & Events
+### Telemetry & Events
 When receiving Telemetry & Event Data the Microservice will create Devices with the Hono Device Id.
 Also the payload of the Hono Message will be sent to Cumulocity as Event of Type `hono_Event` or `hono_Telemetry`. 
 
@@ -41,7 +41,7 @@ You can find an Apama Monitor Example to Map Temperature Telemetry Data to a Tem
 
 Example: Hono sends `{"temp": 20.5}`. The Apama Example Monitor will create a Temperature Measurement of Type `c8y_TemperatureMeasurement` with the same value and Timestamp of the system (as no timestamp is provided).
 
-#### Command & Control
+### Command & Control
 
 For Command & Control the Data Mapping is mainly done be defining the Data Model of the Operation so that the Hono Command & Control/Device can interpret and execute that command. 
 The following Properties/Fragments could be maintained in the Operation:
