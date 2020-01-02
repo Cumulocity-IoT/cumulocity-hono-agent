@@ -2,7 +2,10 @@
 
 ## Description
 This is an Agent/Microservice that integrates with [Eclipse Hono](https://hono.eclipse.org). Hono is a an IoT Hub which handles the messaging of IoT Devices including Telemetry Data and Command & Control Data.
-This Microservice will act as a Consumer Application, listens to all Telemetry & Event Data provided by Hono and forward the Data to Cumulocity.
+This Microservice will act as a Consumer Application, listens to all Telemetry & Event Data provided by Hono and forward the Data to Cumulocity. Vice Versa it transforms Cumulocity Operations to Hono Commands.
+
+![architecture](img/architecture.png)
+
 Each Hono Tenant is mapped to one Cumulocity Tenant this is why the Microservice isolation level is "Per-Tenant".
 Currently only Telemetry & Event Data is supported by this Microservice. Command & Control functionality might be added later on.
 
