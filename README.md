@@ -69,7 +69,7 @@ Operations can be created by either adding `c8y_SupportedOperations` on the Devi
 
 ## Prerequisites
 
-- An Hono Instance or a Tenant in the [Hono Sandbox] (https://www.eclipse.org/hono/sandbox/) is required.
+- An Hono Instance or a Tenant in the [Hono Sandbox](https://www.eclipse.org/hono/sandbox/) is required.
 - A Cumulocity Tenant with Admin Privileges and Microservice Deployment Feature is required. You can request a free trial [here](https://cumulocity.com/try-cumulocity-free/).
 
 
