@@ -1,14 +1,12 @@
 # Cumulocity Agent for Eclipse Hono
 
 ## Description
-This is an Agent/Microservice that integrates with [Eclipse Hono](https://hono.eclipse.org). Hono is a an IoT Hub which handles the messaging of IoT Devices including Telemetry Data and Command & Control Data.
+This is an Agent/Microservice that integrates with [Eclipse Hono](https://hono.eclipse.org). Hono is an IoT Hub which handles the messaging of IoT Devices including Telemetry Data and Command & Control Data.
 This Microservice will act as a Consumer Application, listens to all Telemetry & Event Data provided by Hono and forward the Data to Cumulocity. Vice Versa it transforms Cumulocity Operations to Hono Commands.
 
 ![architecture](img/architecture.png)
 
 Each Hono Tenant is mapped to one Cumulocity Tenant this is why the Microservice isolation level is "Per-Tenant".
-Currently only Telemetry & Event Data is supported by this Microservice. Command & Control functionality might be added later on.
-
 This Microservices uses the [Hono Client](https://github.com/eclipse/hono/tree/master/client) and is based on Example Code from [IoT Hub Examples](https://github.com/bsinno/iot-hub-examples) by Bosch Software Innovations GmbH.
 
 The [Cumulocity Microservice SDK](https://cumulocity.com/guides/microservice-sdk/introduction/) version 1005.6.1 in combination with Java 8 + Spring Boot 1.5 are used.
@@ -17,7 +15,8 @@ The [Cumulocity Microservice SDK](https://cumulocity.com/guides/microservice-sdk
 
 ### Telemetry & Events
 When receiving Telemetry & Event Data the Microservice will create Devices with the Hono Device Id.
-Also the payload of the Hono Message will be sent to Cumulocity as Event of Type `hono_Event` or `hono_Telemetry`. 
+Also the payload of the Hono Message will be sent to Cumulocity as Event of Type `hono_Event` or `hono_Telemetry`. All the payload of Hono will be stored in the Property `hono_Content`.
+> For simplification it is assumed that JSON only will be sent by Hono. This can be adapted if needed.
 
 Example of Hono Event in Cumulocity:
 ```json
@@ -70,7 +69,7 @@ Operations can be created by either adding `c8y_SupportedOperations` on the Devi
 ## Prerequisites
 
 - An Hono Instance or a Tenant in the [Hono Sandbox](https://www.eclipse.org/hono/sandbox/) is required.
-- A Cumulocity Tenant with Admin Privileges and Microservice Deployment Feature is required. You can request a free trial [here](https://cumulocity.com/try-cumulocity-free/).
+- A Cumulocity Tenant with Admin Privileges, Apama and Microservice Deployment Feature is required. You can request a free trial [here](https://cumulocity.com/try-cumulocity-free/).
 
 
 ## Preparations & Setup
@@ -99,7 +98,7 @@ Operations can be created by either adding `c8y_SupportedOperations` on the Devi
    ```
    
    As an alternative you can just add the hono configuration to the `application.properties` in the resources folder.
-   You can find an example the the resources folder.
+   You can find an example in the resources folder.
 
 ## Build
 Make sure that [Docker](https://www.docker.com/) and [Apache Maven](https://maven.apache.org/) are installed and running on your Computer.
