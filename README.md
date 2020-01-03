@@ -1,21 +1,23 @@
 # Cumulocity Agent for Eclipse Hono
 
 ## Description
-This is an Agent/Microservice that integrates with [Eclipse Hono](https://hono.eclipse.org). Hono is an IoT Hub which handles the messaging of IoT Devices including Telemetry Data and Command & Control Data.
+This is an Agent/Microservice that integrates with [Eclipse Hono](https://hono.eclipse.org). Hono is an IoT Hub which handles the Connectivity & Messaging of IoT Devices including Telemetry Data and Command & Control Data.
 This Microservice will act as a Consumer Application, listens to all Telemetry & Event Data provided by Hono and forward the Data to Cumulocity. Vice Versa it transforms Cumulocity Operations to Hono Commands.
 
 ![architecture](img/architecture.png)
 
-Each Hono Tenant is mapped to one Cumulocity Tenant this is why the Microservice isolation level is "Per-Tenant".
-This Microservices uses the [Hono Client](https://github.com/eclipse/hono/tree/master/client) and is based on Example Code from [IoT Hub Examples](https://github.com/bsinno/iot-hub-examples) by Bosch Software Innovations GmbH.
+Each Hono Tenant is mapped to one Cumulocity Tenant. Therefore the Microservice isolation level is "Per-Tenant" which means that for each Tenant an own microservice instance will be created.
+This Microservice uses the [Hono Client](https://github.com/eclipse/hono/tree/master/client) and is based on Example Code from [IoT Hub Examples](https://github.com/bsinno/iot-hub-examples) by Bosch Software Innovations GmbH.
 
 The [Cumulocity Microservice SDK](https://cumulocity.com/guides/microservice-sdk/introduction/) version 1005.6.1 in combination with Java 8 + Spring Boot 1.5 are used.
 
-## Hono C8Y Data Mapping
+## Hono Cumulocity Data Mapping
+Hono itself is totally payload agnostic. Cumulocity provides a [flexible Domain Model](https://cumulocity.com/guides/concepts/domain-model/). In the following it is described how the Data Mapping is done for Telemetry & Event Data and Command & Control Data.
 
 ### Telemetry & Events
-When receiving Telemetry & Event Data the Microservice will create Devices with the Hono Device Id.
+When receiving Telemetry & Event Data the Microservice will create Devices with the Hono Device Id in Cumulocity. When the Device is already existing the Device will be updated.
 Also the payload of the Hono Message will be sent to Cumulocity as Event of Type `hono_Event` or `hono_Telemetry`. All the payload of Hono will be stored in the Property `hono_Content`.
+
 > For simplification it is assumed that JSON only will be sent by Hono. This can be adapted if needed.
 
 Example of Hono Event in Cumulocity:
@@ -38,21 +40,20 @@ Example of Hono Event in Cumulocity:
 ```
 As Hono is totally payload agnostic, no static Mapping is added to the Microservice. 
 
-Apama allows dynamically to decode the Payload of Hono Messages without touching the code of this Microservice.
-You can find an Apama Monitor Example to Map Temperature Telemetry Data to a Temperature Measurement [here](/src/apamamapper/TempMapper.mon)
+Apama allows dynamical decoding of the Hono Messages Payload without touching the code of this Microservice.
+You can find an Apama Monitor Example to map Hono Temperature Telemetry Data to a Cumulocity Temperature Measurement [here](/src/apamamapper/TempMapper.mon)
 
 Example: Hono sends `{"temp": 20.5}`. The Apama Example Monitor will create a Temperature Measurement of Type `c8y_TemperatureMeasurement` with the same value and Timestamp of the system (as no timestamp is provided).
 
 ### Command & Control
-
 For Command & Control the Data Mapping is mainly done be defining the Data Model of the Operation so that the Hono Command & Control/Device can interpret and execute that command. 
-The following Properties/Fragments could be maintained in the Operation:
+The following Properties/Fragments should be maintained in the Operation:
  - `hono_Command` (Required) - The command sent by the Platform.
  - `hono_OneWay` (Optional) - If Set to `true` One-Way Commands will be sent to Hono. The Operation will be set to SUCCESSFUL or FAILED when delivered to Hono
  - `hono_Data` (Optional) - Additional data to be used by the command e.g. Software List etc.
  - `hono_ContentType` (Optional) - The Content Type of the `hono_Data`. Should be maintained when Data is available.
  - `hono_Headers` (Optional) - Any additional Headers which should be sent to the Device.
-Here is an example of an interpretable Operation:
+Here is an example of an interpretable Cumulocity Operation:
 
 ```json
 {
@@ -98,7 +99,7 @@ Operations can be created by either adding `c8y_SupportedOperations` on the Devi
    ```
    
    As an alternative you can just add the hono configuration to the `application.properties` in the resources folder.
-   You can find an example in the resources folder.
+   You can find an [example](src/main/resources/application.properties) in the resources folder.
 
 ## Build
 Make sure that [Docker](https://www.docker.com/) and [Apache Maven](https://maven.apache.org/) are installed and running on your Computer.
